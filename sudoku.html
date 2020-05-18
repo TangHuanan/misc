@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SoKou</title>
+    <style>
+      .state {
+        line-height: 30px;
+        padding-bottom: 8px;
+      }
+      .state button {
+        font-size: 20px;
+        letter-spacing: 8px;
+        min-width: 120px;
+      }
+      .state span {
+        display: inline-block;
+        color: green;
+        letter-spacing: 4px;
+        font-size: 20px;
+        padding-left: 20px;
+        padding-right: 20px;
+        min-width: 100px;
+        text-align: center;
+      }
+      .ai {
+        line-height: 30px;
+        padding-bottom: 8px;
+      }
+      .ai button {
+        font-size: 20px;
+        letter-spacing: 8px;
+        min-width: 120px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="state">
+      <button id="editBtn" type="button">编辑</button>
+      <button id="startBtn" type="button">开始</button>
+      <span id="timer">0</span>
+      <button id="autoFillBtn" type="button">自动填充</button>
+    </div>
+    <div class="ai">
+      <button id="aiStartBtn" type="button">电脑</button>
+      <span>共有<span id="aiTotal">0</span>种答案</span>
+      <span>当前第<span id="aiCurrent">0</span>种答案</span>
+      <button id="aiNextBtn" type="button">下一个</button>
+    </div>
+    <canvas id="myCanvas" width="600" height="800"></canvas>
+  </body>
+  <script>
+    const INPUT = 1;
+    const DOING = 2;
+    const FINISHED = 3;
+
+    const WIDTH = 60;
+    const BTN_OFFSET = 24;
+
+    const BS_ORIGON = 1;
+    const BS_USER = 2;
+    const BS_SELECTED = 3;
+    const BS_ERROR = 4;
+    const BS_COMPUTER = 5;
+    const state_colors = ["#000", "#0e0", "#00e", "#e00", "#0ee"];
+    const init_map = [
+      [2, 0, 0, 6, 0, 5, 0, 0, 8],
+      [0, 0, 9, 0, 0, 0, 1, 0, 0],
+      [1, 4, 0, 7, 0, 3, 0, 0, 6],
+      [3, 0, 0, 0, 4, 0, 0, 8, 5],
+      [0, 0, 5, 0, 0, 0, 6, 0, 0],
+      [7, 0, 0, 8, 0, 6, 0, 0, 1],
+      [9, 7, 0, 0, 0, 0, 3, 1, 4],
+      [0, 0, 3, 0, 7, 0, 0, 0, 0],
+      [4, 0, 0, 3, 0, 9, 0, 5, 0],
+    ];
+
+    class Soduku {
+      constructor(eid) {
+        let c = document.getElementById(eid);
+        this.ctx = c.getContext("2d");
+        this.state_map = [];
+        this.data = [];
+        this.freeData = [];
+        this.state = BS_USER;
+        this.cur_pos = [0, 0];
+        this.duration = 0;
+        this.timerid = 0;
+        this.writeable = [];
+        for (let i = 0; i < 9; i++) {
+          this.state_map[i] = new Array();
+          this.data[i] = new Array();
+          for (let j = 0; j < 9; j++) {
+            this.data[i][j] = init_map[i][j];
+            this.state_map[i][j] = 0;
+            if (init_map[i][j] > 0) {
+              this.state_map[i][j] = BS_ORIGON;
+            }
+          }
+        }
+        this.parseOneItem(0, 0);
+        c.onclick = this.onclick.bind(this);
+        this.canvas = c;
+      }
+      onclick(e) {
+        let x = event.pageX - this.canvas.getBoundingClientRect().left;
+        let y = event.pageY - this.canvas.getBoundingClientRect().top;
+        if (x >= 0 && x <= 9 * WIDTH && y >= 0 && y <= 9 * WIDTH) {
+          this.onPanelClick(x, y);
+        } else if (x >= 0 && x <= 9 * WIDTH && y >= BTN_OFFSET + 9 * WIDTH && y < BTN_OFFSET + 10 * WIDTH) {
+          this.onTextClick(x, y - BTN_OFFSET - 9 * WIDTH);
+        }
+        this.draw();
+      }
+      onPanelClick(x, y) {
+        x = Math.floor(x / WIDTH);
+        y = Math.floor(y / WIDTH);
+        this.cur_pos = [x, y];
+        this.selected = 0;
+        if (this.data[y][x] == 0) {
+          this.parseOneItem(x, y);
+        } else {
+          this.selected = this.data[y][x];
+        }
+      }
+      parseOneItem(x, y) {
+        for (let i = 0; i < 9; i++) {
+          this.writeable[i] = i + 1;
+        }
+        for (let i = 0; i < 9; i++) {
+          let t = this.data[y][i];
+          if (t > 0) {
+            this.writeable[t - 1] = 0;
+          }
+          t = this.data[i][x];
+          if (t > 0) {
+            this.writeable[t - 1] = 0;
+          }
+        }
+        let x0 = Math.floor(x / 3) * 3;
+        let y0 = Math.floor(y / 3) * 3;
+        for (let i = 0; i < 3; i++) {
+          for (let j = 0; j < 3; j++) {
+            let t = this.data[y0 + i][x0 + j];
+            if (t > 0) {
+              this.writeable[t - 1] = 0;
+            }
+          }
+        }
+        x = 0;
+        for (let i = 0; i < 9; i++) {
+          x += this.writeable[i] > 0 ? 1 : 0;
+        }
+        return x;
+      }
+      onTextClick(x, y) {
+        let t = Math.floor(x / WIDTH) + 1;
+        x = this.cur_pos[0];
+        y = this.cur_pos[1];
+        if (this.state == INPUT) {
+          this.state_map[y][x] = BS_ORIGON;
+          this.data[y][x] = t;
+        } else if (this.state == DOING) {
+          if (this.state_map[y][x] != BS_ORIGON) {
+            this.state_map[y][x] = BS_USER;
+            this.data[y][x] = t;
+          }
+        }
+      }
+
+      begin() {
+        this.state = DOING;
+        this.draw();
+        this.timerid = setInterval(this.onTimeout.bind(this), 1000);
+      }
+      edit() {
+        this.state = INPUT;
+        for (let i = 0; i < 9; i++) {
+          for (let j = 0; j < 9; j++) {
+            this.data[i][j] = 0;
+            this.state_map[i][j] = 0;
+          }
+        }
+        this.cur_pos = [0, 0];
+        this.draw();
+      }
+      onTimeout() {
+        this.duration += 1;
+        let t = document.getElementById("timer");
+        t.innerText = "" + this.duration;
+      }
+      copyWriteable() {
+        let a = [];
+        for (let i = 0; i < 9; i++) {
+          a[i] = this.writeable[i];
+        }
+        return a;
+      }
+
+      autoFill() {
+        let fillCount = 1;
+        while (fillCount > 0) {
+          fillCount = 0;
+          let all = [];
+          for (let i = 0; i < 9; i++) {
+            all[i] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            for (let j = 0; j < 9; j++) {
+              if (this.data[i][j] != 0) continue;
+              let rc = this.parseOneItem(j, i);
+              if (rc == 1) {
+                for (let k = 0; k < 9; k++) {
+                  if (this.writeable[k]) {
+                    this.data[i][j] = k + 1;
+                    this.state_map[i][j] = BS_COMPUTER;
+                    fillCount += 1;
+                  }
+                }
+              }
+              all[i][j] = this.copyWriteable();
+            }
+          }
+          for (let i = 0; i < 3; i++) {
+            for (let j = 0; j < 3; j++) {
+              let nc = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+              for (let k = 0; k < 9; k++) {
+                let cx = j * 3 + (k % 3);
+                let cy = i * 3 + Math.floor(k / 3);
+                if (all[cy][cx]) {
+                  for (let n = 0; n < 9; n++) {
+                    nc[all[cy][cx][n]] += 1;
+                  }
+                }
+              }
+              for (let n = 1; n < 10; n++) {
+                if (nc[n] == 1) {
+                  for (let k = 0; k < 9; k++) {
+                    let cx = j * 3 + (k % 3);
+                    let cy = i * 3 + Math.floor(k / 3);
+                    if (this.data[cy][cx] == 0 && all[cy][cx] && all[cy][cx][n - 1]) {
+                      this.data[cy][cx] = n;
+                      this.state_map[cy][cx] = BS_COMPUTER;
+                      fillCount += 1;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      autoFillEvent() {
+        this.autoFill();
+        this.draw();
+      }
+
+      aiStart() {
+        this.resultCount = 0;
+        this.result = [];
+        this.cur_result_idx = 0;
+        this.run_count = 0;
+        this.aiFill(0);
+        this.aiDraw();
+      }
+      dataCopy(dst, src) {
+        for (let i = 0; i < 9; i++) {
+          dst[i] = new Array();
+          for (let j = 0; j < 9; j++) {
+            dst[i][j] = src[i][j];
+          }
+        }
+      }
+      isError() {
+        for (let i = 0; i < 9; i++) {
+          let a = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+          for (let j = 0; j < 9; j++) {
+            a[this.data[i][j]] += 1;
+          }
+          for (let j = 1; j < 9; j++) {
+            if (a[j] > 1) return true;
+          }
+        }
+        for (let i = 0; i < 9; i++) {
+          let a = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+          for (let j = 0; j < 9; j++) {
+            a[this.data[j][i]] += 1;
+          }
+          for (let j = 1; j < 9; j++) {
+            if (a[j] > 1) return true;
+          }
+        }
+        return false;
+      }
+      isSame(xd) {
+        for (let i = 0; i < 9; i++) {
+          for (let j = 0; j < 9; j++) {
+            if (this.data[i][j] != xd[i][j]) {
+              return false;
+            }
+          }
+        }
+        return true;
+      }
+
+      handleComplete() {
+        for (let i = 0; i < 9; i++) {
+          for (let j = 0; j < 9; j++) {
+            if (this.data[i][j] == 0) {
+              return false;
+            }
+          }
+        }
+        for (let n = 0; n < this.resultCount; n++) {
+          let xd = this.result[n];
+          if (this.isSame(xd)) return;
+        }
+
+        let x = [];
+        this.dataCopy(x, this.data);
+
+        this.resultCount += 1;
+        this.result.push(x);
+        console.log("result:", this.resultCount, x);
+        return true;
+      }
+      aiFill(layer) {
+        layer += 1;
+        this.run_count += 1;
+        if (this.resultCount > 20) {
+          return;
+        }
+        if (this.isError()) {
+          return;
+        }
+        this.autoFill();
+        if (this.handleComplete()) {
+          return;
+        }
+        for (let i = 0; i < 9; i++) {
+          for (let j = 0; j < 9; j++) {
+            if (this.data[i][j] == 0) {
+              let rc = this.parseOneItem(j, i);
+              if (rc == 0) return;
+              let xxx = this.copyWriteable();
+              let orgData = [];
+              this.dataCopy(orgData, this.data);
+              for (let k = 0; k < 9; k++) {
+                this.dataCopy(this.data, orgData);
+                if (xxx[k]) {
+                  this.data[i][j] = k + 1;
+                  this.state_map[i][j] = BS_COMPUTER;
+                  console.log(`layer=${layer} count=${this.run_count} i=${i} j=${j} data=${k + 1}`);
+                  this.aiFill(layer);
+                }
+              }
+            }
+          }
+        }
+      }
+      aiDraw() {
+        let t = document.getElementById("aiTotal");
+        t.innerText = this.resultCount + "";
+        t = document.getElementById("aiCurrent");
+        t.innerText = this.cur_result_idx + 1 + "";
+        this.dataCopy(this.data, this.result[this.cur_result_idx]);
+        this.draw();
+      }
+      aiNext() {
+        this.cur_result_idx = (this.cur_result_idx + 1) % this.resultCount;
+        this.aiDraw();
+      }
+
+      draw() {
+        let colors = ["#782", "#357"];
+        this.ctx.beginPath();
+        this.ctx.fillStyle = "#fff";
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        this.ctx.beginPath();
+        this.ctx.lineWidth = 1;
+        for (let i = 0; i < 9; i++) {
+          let x = Math.floor(i / 3) * (3 * WIDTH);
+          let y = Math.floor(i % 3) * (3 * WIDTH);
+          this.ctx.fillStyle = colors[i % 2];
+          this.ctx.fillRect(x, y, 3 * WIDTH, 3 * WIDTH);
+        }
+        this.ctx.beginPath();
+        this.ctx.strokeStyle = "#111";
+        for (let i = 0; i < 10; i++) {
+          this.ctx.moveTo(i * WIDTH, 0);
+          this.ctx.lineTo(i * WIDTH, 9 * WIDTH);
+          this.ctx.moveTo(0, i * WIDTH);
+          this.ctx.lineTo(9 * WIDTH, i * WIDTH);
+        }
+        this.ctx.stroke();
+
+        this.ctx.beginPath();
+        this.ctx.strokeStyle = "#ff0";
+        this.ctx.lineWidth = 3;
+        let x = this.cur_pos[0] * WIDTH;
+        let y = this.cur_pos[1] * WIDTH;
+        this.ctx.rect(x, y, WIDTH, WIDTH);
+        this.ctx.stroke();
+
+        this.ctx.beginPath();
+        this.ctx.strokeStyle = "#fff";
+        this.ctx.lineWidth = 2;
+        this.ctx.fillStyle = "#384";
+        for (let i = 0; i < 9; i++) {
+          let x = i * WIDTH;
+          let y = 9 * WIDTH + BTN_OFFSET;
+
+          this.ctx.rect(x, y, WIDTH, WIDTH);
+        }
+        this.ctx.fill();
+        this.ctx.stroke();
+
+        this.ctx.font = `${WIDTH - 20}pt 宋体`;
+        for (let i = 0; i < 9; i++) {
+          for (let j = 0; j < 9; j++) {
+            if (this.data[i][j] > 0) {
+              this.ctx.beginPath();
+              this.ctx.fillStyle = state_colors[this.state_map[i][j] - 1];
+              if (this.data[i][j] == this.selected) {
+                this.ctx.fillStyle = state_colors[BS_SELECTED - 1];
+              }
+              this.ctx.fillText(this.data[i][j], j * WIDTH + 15, i * WIDTH + WIDTH / 2 + 20);
+              this.ctx.stroke();
+            }
+          }
+        }
+
+        y = 9 * WIDTH + BTN_OFFSET;
+        this.ctx.fillStyle = "#eee";
+        for (let i = 0; i < 9; i++) {
+          this.ctx.beginPath();
+
+          this.ctx.fillStyle = this.writeable[i] ? "#eee" : "#888";
+          this.ctx.fillText("" + (i + 1), i * WIDTH + 15, y + WIDTH / 2 + 20);
+          this.ctx.stroke();
+        }
+      }
+    }
+
+    let s = new Soduku("myCanvas");
+    s.draw();
+
+    document.getElementById("startBtn").onclick = () => s.begin();
+    document.getElementById("editBtn").onclick = () => s.edit();
+    document.getElementById("aiStartBtn").onclick = () => s.aiStart();
+    document.getElementById("aiNextBtn").onclick = () => s.aiNext();
+    document.getElementById("autoFillBtn").onclick = () => s.autoFillEvent();
+  </script>
+</html>
